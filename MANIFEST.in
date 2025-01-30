@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+include enty/version.py
+recursive-include enty *.py
