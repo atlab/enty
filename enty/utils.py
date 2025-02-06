@@ -3,8 +3,15 @@ from typing import Union
 from collections.abc import Iterable
 
 
-def is_scalar_type(value):
-    return not isinstance(value, (Iterable,)) or isinstance(value, (str, bytes))
+def is_scalar_type(value, allow_tuple=True):
+    # allow all scalar types -- this includes all non-Iterables as well as str and byte objects
+    if not isinstance(value, (Iterable,)) or isinstance(value, (str, bytes)):
+        return True
+    # also allow tuple objects as long as they are composed of scalar objects
+    # note: in the recursion step, set allow_tuple=False so that we don't allow nested tuples.
+    if allow_tuple and isinstance(value, (tuple,)):
+        return all(is_scalar_type(entry, allow_tuple=False) for entry in value)
+    return False
 
 
 def camel_to_snake(camel: Union[str, None]) -> str:

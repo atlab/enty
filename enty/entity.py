@@ -8,7 +8,7 @@ logger.setLevel(level=logging.INFO)
 from .utils import is_scalar_type, camel_to_snake
 
 from dataclasses import fields, asdict, astuple
-from typing import Any, List, Optional, Union, Type, Callable
+from typing import Any, List, Optional, Union, Type, Callable, get_origin, get_args
 from types import MappingProxyType
 
 ENTITY_DEFAULTS = {
@@ -188,7 +188,10 @@ class Identity(type):
             raise ValueError(f"Expected 2 parts from path '{path}', got {len(parts)}: {parts}")
 
         identity, fields_str = parts
-        if identity != cls.identity:
+        if cls.identity not in identity:  # TODO: this will correctly not raise an error if the file identity contains prefixes or suffixes, but
+                                            # it will not extract the prefixes and suffixes if they are present. Consider making more general
+                                            # to be able to extract prefixes and suffixes (and any other metadata from the filename) and update
+                                            # the config dict of the new object
             raise ValueError(f"File identity '{identity}' != class identity '{cls.identity}'")
 
         field_values = fields_str.split(cls.field_sep)
@@ -211,6 +214,13 @@ class Identity(type):
             # We assume a direct constructor call ftype(val) or something more nuanced if needed
             logger.debug(f"[{cls.class_name}._read_path] Parsing field: {fname}, Value: {val}, Type: {ftype}")
             try:
+                if val.startswith("tup"):  # TODO: Can we detect iterables beyond specific tags in the value?
+                    val = val[4:].split("_")
+                    subtype = get_args(ftype)
+                    if subtype:
+                        val = map(subtype[0], val) # TODO: Right now, we assume that there will be only one subtype in the argument, so we can extract the first item. In the future, we may need to generalize this to accept multiple object types
+                        ftype = get_origin(ftype)  # TODO: We could explicitly assign tuple to ftype, but using get_origin will generalize better if we extend beyond only tuples in the future. 
+                                                        # Also note: If there are no subarguments, then get_origin will return None, so we only need to call this if get_args returns a list with entries
                 parsed_values[fname] = ftype(val)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Error parsing field '{fname}' with value '{val}': {e}")
@@ -355,7 +365,13 @@ class Entity(metaclass=Identity):
         str
             The constructed filename.
         """
-        vals = [str(getattr(self.key, f.name)) for f in fields(self.key)]
+        vals = []
+        for f in fields(self.key):
+            attr = getattr(self.key, f.name)
+            if isinstance(attr, tuple):
+                attr = "tup_" + "_".join(map(str, attr))  # TODO: Currently, this generates a different filename if the tuple is ordered differently. We may want to consider sorting the tuple -- it has its pros and cons
+            str_repr = str(attr)
+            vals.append(str_repr)
         identity = _compute_identity(self, prefix=prefix, suffix=suffix)
         ident_sep = ident_sep if ident_sep is not None else self.ident_sep
         field_sep = field_sep if field_sep is not None else self.field_sep
@@ -369,7 +385,7 @@ class Entity(metaclass=Identity):
         logger.debug(f"[{self.class_name}.get_filename] Constructed filename: {name}")
         return name
 
-    def get_path(self, base_dir=None, sub_dir=None, src_dir=None, make_dir=None, ext=None, prefix=None, suffix=None, ident_sep=None, field_sep=None):
+    def get_path(self, ext=None, base_dir=None, sub_dir=None, src_dir=None, make_dir=None, prefix=None, suffix=None, ident_sep=None, field_sep=None):
         """
         Construct a filesystem path for this instance based on its class identity
         and its field values.
